@@ -1,5 +1,6 @@
 import socket
 import threading
+import ircexceptions
 
 class Client:
 	"""A class creating client-associated sockets and interacting with users of a basic IRC server. Does the following:
@@ -99,4 +100,12 @@ class Client:
 # 		username:
 # 		address:
 # 		socket object: passed in as a parameter for the init
+
+if __name__== '__main__':
+	host = '127.0.0.1' # Allows only local folks to connect
+	port = 1060 # A randomly chosen port for listening
+	c = Client()
+	c.client_setup(host,port)
+	c._get_username()
+	c.initiate_communication() # employs the send_messages and recv_messages methods
 

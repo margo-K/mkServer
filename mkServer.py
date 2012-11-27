@@ -6,6 +6,8 @@ import select
 import sys
 import Queue
 import time
+import ircmessage
+from ircexceptions import *
 
 
 class Server: 
@@ -23,10 +25,29 @@ class Server:
 		self.current_sockets = []
 		self.message_queue = Queue.Queue()
 		self.username_directory = {}  #keys = socket objects, entries = usernames
-		self.action_dictionary = {"/NICK": self._store_username, "/EXIT": self._client_terminate, "/MSG": self._ping}
 		self.message_rest = {} # keys = clientserver_sockets
 
-	#State Changing
+		self.action_dictionary = {"NICK": self._store_username, "PRIVMSG": self._ping, "EXIT": self._client_terminate}
+		
+
+	def _store_username(self,clientserver_socket,username):
+		"""Store a client's username in the username dictionary"""
+		self.username_directory[clientserver_socket] = username
+		print username + "has been stored as a username." 
+	
+	def _ping(self,clientserver_socket,message):
+		"""Called when a message is sent from the clientserver_socket"""
+		self.message_queue.put((message,clientserver_socket))
+
+	def _client_terminate(self,clientserver_socket,exit_message = "Client Exiting"):
+		""""""
+		addr = clientserver_socket.getpeername()
+		usn = self.username_directory[clientserver_socket]
+		self.current_sockets.remove(clientserver_socket)
+
+		clientserver_socket.close()
+		print (exit_message + "Client %s Removed at %s") % (usn,addr)
+
 	def _create_serversocket(self):
 		"""Create a new listening server socket"""
 		self.server_socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
@@ -36,6 +57,7 @@ class Server:
 		self.server_socket.listen(5)
 
 		print "Listening at", self.server_socket.getsockname()
+
 		
 	def server_setup(self,host,port):
 		"""Create the server and initialize the readlist"""
@@ -44,27 +66,21 @@ class Server:
 
 	# _client_accept :: (<accept()>)=>new cs_socket ::  (<function>)=> Socket
 	def _client_accept(self): 
-		"""Accept a new client"""
+		"""* Accept a new client"""
 		clientserver_socket, clientserver_address = self.server_socket.accept() #where addr :: the address bound to the socket on the other end of the connection
 		print "Connection from: ", clientserver_address
 		print "Socket connects", clientserver_socket.getsockname(), "on the server side to", clientserver_socket.getpeername(), "on the client side."
 		return clientserver_socket
 
 	#State Changing
-	def _store_username(self,clientserver_socket,username):
-		"""Store a client's username in the username dictionary"""
-		self.username_directory[clientserver_socket] = username
-		print username + "has been stored as a username." 
-
-	#State Changing
 	def setup_user(self):
-		"""Accept a new client and get them set up for communication"""
+		"""* Accept a new client and get them set up for communication"""
 		new_socket = self._client_accept()
 		new_socket.setblocking(0) # non-blocking
 		self.current_sockets.append(new_socket)
 		self.message_rest[new_socket] = ''
+		print "I've reached the end of the setup_user action"
 	
-
 	# Pure: <message,clientserver_socket> => formatted message :: <String,socketobject> => String
 	def _message_maker (self,clientserver_socket,message):
 		"""Format a message so that it includes the username; Used as message is sent"""
@@ -82,26 +98,17 @@ class Server:
 	# Pure: <self,String,Socket> -> (action :: function, argument :: String), Boolean | message :: String, Boolean""
 	def _parse_message(self,message):
 		"""Return a tuple including the method for action being performed and the argument it accepts"""
-		print "The message being parsed is " + str(message) + "\r"
-		print "It is " + str(message.startswith('/'))+ "that the message starts with a /"
-		# try:
-		if message.startswith('/'):
-			(tag,delimiter,argument) = message.partition(' ') # Splits the action call off from the argument
+		print "The message being parsed is " + str(message)
+		(tag,delimiter,argument) = message.partition(' ') # Splits the action call off from the argument
+		try:
 			action = self.action_dictionary[tag]
+		except KeyError:
+			print "%s is not a valid action"%tag
+		else: 
 			return (action,argument)
-		# else: 
-		# 	return error
-
-	# 	message_triage :: !return
-	# 	message_triage calls :: self._parse_message() | self._client_terminate()
-	# 	message_triage alters :: (optionally) self.message_queue + that which is altered by - <action>, _parse_message(), _client_terminate()
-	
-	def _ping(self,clientserver_socket,message):
-		"""Called when a message is sent from the clientserver_socket"""
-		self.message_queue.put((message,clientserver_socket))
 
 	def message_process(self,clientserver_socket):
-		"""Receives messages and performs the requested action, which always involves a state-change"""
+		""" * Receives messages and performs the requested action, which always involves a state-change"""
 		received = self.message_rest[clientserver_socket] + clientserver_socket.recv(1024)
 		sndr_addr = clientserver_socket.getpeername() 
 		print  "%s: says %s."% (sndr_addr,received)
@@ -111,23 +118,19 @@ class Server:
 		else: 
 			messages, rest = self._decode_data(received) #Note: the problem right now is that decode_messages returns a string of messages and the methods below operate on a single one
 			for m in messages:
-				action, argument = m
-				print "This is the action: " + str(action)
-				print "This is the argument: " + str(argument)
-				action(clientserver_socket,argument)
+				try:
+					action, argument = m
+				except TypeError:
+					print "%s is not a complete message. The action, the argument or both are missing."%m 
+				else:
+					print "This is the action: " + str(action)
+					print "This is the argument: " + str(argument)
+					action(clientserver_socket,argument)
 
 			self.message_rest[clientserver_socket] = rest	
-			
-	def _client_terminate(self,clientserver_socket,exit_message = "Client Exiting"):
-		addr = clientserver_socket.getpeername()
-		usn = self.username_directory[clientserver_socket]
-		self.current_sockets.remove(clientserver_socket)
-
-		clientserver_socket.close()
-		print (exit_message + "Client %s Removed at %s") % (usn,addr)
 
 	def daily_activity(self):
-		""" Perform the accepting of new clients, receiving of new messages and the distribution of the messages """
+		"""  Perform the accepting of new clients, receiving of new messages and the distribution of the messages """
 		
 		read_result, write_result, error_result = select.select(self.current_sockets, self.current_sockets, self.current_sockets) #Does this formulation allow them to change?
 		
@@ -151,9 +154,9 @@ class Server:
 		 			print 'Sending "%s" to %s' % (current_message,socket.getpeername()) 
 		 			sckt.send(current_message)
 
-	# def server_terminate(self):
-	# 	"""Closes the server socket"""
-	# 	self.server_socket.close() # closes the server socket
+	def server_terminate(self):
+		"""Closes the server socket"""
+		self.server_socket.close() # closes the server socket
     
 
 
@@ -163,22 +166,20 @@ if __name__== '__main__':
 	host = '127.0.0.1' # Allows only local folks to connect
 	port = 1060 # A randomly chosen port for listening
 
-	if sys.argv[1] == 'client':
-	    c = Client()
-	    c.client_setup(host,port)
-	    c._get_username()
-	    c.initiate_communication() # employs the send_messages and recv_messages methods
+	s = Server()
+	s.server_setup(host,port)
 
-	if sys.argv[1] == 'server':
-	    s = Server()
-	    s.server_setup(host,port)
+	try: #len(s.read_try)> 1 : # there are users other than the server
+		while True:
+			s.daily_activity()#Goes about the process of accepting clients, getting communication going and closing their sockets, if necessary or requested
+	except KeyboardInterrupt:
+		print "\n The server will now exit"
+		s.server_terminate()
 
-	    while True: #len(s.read_try)> 1 : # there are users other than the server
-	    	s.daily_activity()#Goes about the process of accepting clients, getting communication going and closing their sockets, if necessary or requested
 
-	    s.server_terminate()
-	    #s.server_terminate() --- you need to do this sequentially, cause you don't want it to terminate before the client has a chance to connect
-   #The actual closing part will happen on the part of the server
+
+		
+	
 
 
 # USE THIS: * i.e. args = [3,6]; range(*args) >> [3,4,5]
