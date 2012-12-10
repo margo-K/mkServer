@@ -3,14 +3,13 @@
 
 import socket
 import select
-import sys
 import Queue
-import time
-import ircmessage
-from ircexceptions import *
+from brain import Brain
+from ircparts import Channel, User, Message
 
 
-class Server: 
+
+class Server:
 	"""A class for creating a home server that will operate an IRC chat
 	* Creates a 'listen' port for the user 
 	* Accepts incoming connection requests from clients desiring connection 
@@ -23,31 +22,10 @@ class Server:
 	def __init__ (self):
 		"""Create all class-level attributes"""
 		self.current_sockets = []
-		self.message_queue = Queue.Queue()
-		self.username_directory = {}  #keys = socket objects, entries = usernames
+		self.message_queues = {} # keys = sockets, entries = outgoing message queue for that user
 		self.message_rest = {} # keys = clientserver_sockets
-
-		self.action_dictionary = {"NICK": self._store_username, "PRIVMSG": self._ping, "EXIT": self._client_terminate}
-		
-
-	def _store_username(self,clientserver_socket,username):
-		"""Store a client's username in the username dictionary"""
-		self.username_directory[clientserver_socket] = username
-		print username + "has been stored as a username." 
+		self.mind = Brain()
 	
-	def _ping(self,clientserver_socket,message):
-		"""Called when a message is sent from the clientserver_socket"""
-		self.message_queue.put((message,clientserver_socket))
-
-	def _client_terminate(self,clientserver_socket,exit_message = "Client Exiting"):
-		""""""
-		addr = clientserver_socket.getpeername()
-		usn = self.username_directory[clientserver_socket]
-		self.current_sockets.remove(clientserver_socket)
-
-		clientserver_socket.close()
-		print (exit_message + "Client %s Removed at %s") % (usn,addr)
-
 	def _create_serversocket(self):
 		"""Create a new listening server socket"""
 		self.server_socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
@@ -79,55 +57,40 @@ class Server:
 		new_socket.setblocking(0) # non-blocking
 		self.current_sockets.append(new_socket)
 		self.message_rest[new_socket] = ''
-		print "I've reached the end of the setup_user action"
-	
-	# Pure: <message,clientserver_socket> => formatted message :: <String,socketobject> => String
-	def _message_maker (self,clientserver_socket,message):
-		"""Format a message so that it includes the username; Used as message is sent"""
-		username = self.username_directory[clientserver_socket]
-		return "%s: %s \n" %(username,message)
-
+		self.message_queues[new_socket] = Queue.Queue()
 	#Pure
 	def _decode_data(self, lump):
 		"""Return two values: list of parsed messages () and a string of partial data"""
 		splits = lump.split('\n')
 		msgs = splits[:-1]
 		rest = splits[-1]
-		return [self._parse_message(m) for m in msgs], rest
+		return msgs, rest
 
-	# Pure: <self,String,Socket> -> (action :: function, argument :: String), Boolean | message :: String, Boolean""
-	def _parse_message(self,message):
-		"""Return a tuple including the method for action being performed and the argument it accepts"""
-		print "The message being parsed is " + str(message)
-		(tag,delimiter,argument) = message.partition(' ') # Splits the action call off from the argument
-		try:
-			action = self.action_dictionary[tag]
-		except KeyError:
-			print "%s is not a valid action"%tag
-		else: 
-			return (action,argument)
+	def message_process(self,source_socket):
+		""" * Receives messages and performs the requested action, which always involves a state-change
 
-	def message_process(self,clientserver_socket):
-		""" * Receives messages and performs the requested action, which always involves a state-change"""
-		received = self.message_rest[clientserver_socket] + clientserver_socket.recv(1024)
-		sndr_addr = clientserver_socket.getpeername() 
-		print  "%s: says %s."% (sndr_addr,received)
+		WHAT IT SHOULD DO: 
+			- send each message to the brain to be parsed and dealt with
+			- receive messages from the brain and enqueue them in the necessary queues
+		"""
+		received = source_socket.recv(1024)
+		sndr_addr = source_socket.getpeername() 
+		print  "%s: says %s"% (sndr_addr,received)
 
 		if received == '': # Connection has failed
-			self._client_terminate(clientserver_socket, " Closing %s after reading no data"%sndr_addr)
-		else: 
-			messages, rest = self._decode_data(received) #Note: the problem right now is that decode_messages returns a string of messages and the methods below operate on a single one
-			for m in messages:
-				try:
-					action, argument = m
-				except TypeError:
-					print "%s is not a complete message. The action, the argument or both are missing."%m 
-				else:
-					print "This is the action: " + str(action)
-					print "This is the argument: " + str(argument)
-					action(clientserver_socket,argument)
+			self._client_terminate(source_socket, " Closing %s after reading no data"%sndr_addr)
+		else:
+			messages, new_rest = self._decode_data(self.message_rest[source_socket] + received) #Note: the problem right now is that decode_messages returns a string of messages and the methods below operate on a single one
+			print "The message is %s and the rest is %s"%(messages,new_rest)
+			self.message_rest[source_socket] = new_rest
 
-			self.message_rest[clientserver_socket] = rest	
+			for m in messages:
+				responses = self.mind.process(m,source_socket) # returns messages that must be sent out as a result of the requested action
+
+			for response in responses:
+				content,destination = response
+				print "I'm about to put the message %s in %s's queue"%(content,destination)
+				self.message_queues[destination].put(content)
 
 	def daily_activity(self):
 		"""  Perform the accepting of new clients, receiving of new messages and the distribution of the messages """
@@ -138,29 +101,25 @@ class Server:
 			#Checks to see if the "msg" is a client wanting to connect
 			if socket is self.server_socket:
 				self.setup_user()
-			#Else, Listens for messages from clients
+			#Else, goes through the process of reading messages and sending them to the brain to be processed
 			else:
 				self.message_process(socket)
 
-		try:
-			message,sender = self.message_queue.get_nowait()
-		except Queue.Empty:
-			pass
-			#write_try.remove(socket) #Does this makes sense? Do i want to remove someone from the write list if they're not sending messages?? I don't think so
-		else:
-	 		for sckt in write_result:
-	 			if sender is not sckt:
-	 				current_message = self._message_maker(sender,message)
-		 			print 'Sending "%s" to %s' % (current_message,socket.getpeername()) 
-		 			sckt.send(current_message)
+		# subtle bug: if someone isn't in the write_result list, they will miss the message
+		
+		for socket in write_result:
+			try:
+				message = self.message_queues[socket].get_nowait()
+			except Queue.Empty:
+				pass
+			else:
+			 	print 'Sending "%s" to %s' % (message,socket.getpeername()) 
+	 			socket.send(message)
 
 	def server_terminate(self):
 		"""Closes the server socket"""
 		self.server_socket.close() # closes the server socket
-    
-
-
-
+ 
 
 if __name__== '__main__':
 	host = '127.0.0.1' # Allows only local folks to connect
@@ -175,14 +134,4 @@ if __name__== '__main__':
 	except KeyboardInterrupt:
 		print "\n The server will now exit"
 		s.server_terminate()
-
-
-
-		
-	
-
-
-# USE THIS: * i.e. args = [3,6]; range(*args) >> [3,4,5]
-
-
 
