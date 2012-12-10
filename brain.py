@@ -1,3 +1,5 @@
+import Channel, Message_Manager,Message,User from ircparts
+
 class Brain():
 	"""The brain primarily functions as the "MAILMAN", with a few added attributes that help with this task:
 
@@ -17,8 +19,8 @@ class Brain():
 				- Channel Operations:
 
 				- The Meat: self.process()
-					The only function called externally by mkServer
-
+					*The only function called externally by mkServer; must return a list of messages of the form (message, destination),
+					where destination is the actual socket (or whatever 'tin can' the client has)
 
 	"""
 
@@ -26,6 +28,7 @@ class Brain():
 		"""Create the initial environment for a functioning brain"""
 		self.username_directory = {}  #keys=usernames; entries: the connection object for each one (where the messages will be sent/received from)
 		self.action_dictionary = {"NICK": self._store_username, "MODE": self._mode_change, "USER":self._set_user, "PRIVMSG":self._ping, "JOIN":self._join_channel, "PART":self._part_channel, "QUIT": self._client_terminate}# may be unnecessary later 
+		self.message_man = Message_Manager()
 
 	######################################################################################################################
 					#Helper Functions#
@@ -51,12 +54,8 @@ class Brain():
 		else: 
 			return field
 
-	def return_messages(self,msg,destination):
-		"""Return a list of tuples of the form (msg,destination)"""
-		messages = []
-		for recipient in destination:
-			messages.append((msg,recipient))
-		return messages
+	def careful_call(fn):
+		"""Call the function being careful that it's okay to call it (based on the user)"""
  
 	######################################################################################################################
 					#Messaging Operations#
@@ -110,29 +109,27 @@ class Brain():
 	######################################################################################################################
 					#Brain Meat#
 	######################################################################################################################
-	def process(self,message,source):
-		""" 1. Sends the message to get parsed by the MESSAGE (no matter what) & returns if it's a valid IRC MESSAGE. Throws an error if not
-			2. Returns the message if it's a valid IRC message tries to perform action (by looking up the action in the username dictionary)
-			3. Tries to perform the action & returns an error if it can't (as a message to be sent out)ß 
-
-		Take a message and perform the action requested, if possible. Return a list of messages that must be sent out """
-		"""pseudocode for what should happen:
-		1. the brain checks whether the source is already a user, if not, it makes a user
-		2. then it checks if the source is 'ready' for what it's asking to do. the disadvantage of having the user handle the message is that then the other actions that are really outside of itself must be performed by it - instead of the brain calling other components to handle it - 
-		it shouldn't need to know what to do - just how it's feeling and what it's ready for
-		3. then it tries to do what it's asking to do and generates exceptions and error messages if it can't (and stores it in message to be sent out)
-
+	def process(self,unformatted_message,source):
+		""" Process individual message strings, perform necessary actions and return a list of error and/or confirmation messages 
+		Called by the Server
 		"""
-		# current_message = Message(message)
-		# current_message.parse()
-		
-		if source not in self.username_directory: 
-			self._store_username(source)
-		recipients = self.username_directory.values()
-		if source in recipients:
-			recipients.remove(source)
+		outgoing_messages = []
 
-		return self.return_messages(message,recipients) 
+		try:
+		(prefix, command, args, trailer) = self.message_man.parse(unformatted_message) # prefix can be ignored for incoming messages
+		except TypeError:
+			print "The message was not a valid IRCMessage" 
+
+		action = self.action_dictionary[command]
+		try: 
+			results = action(clientserver_socket,args,trailer) # Should not return if the action doesn't have the right number of arguments or the right types
+		except TypeError:
+			print "The action cannot be performed with the provided parameters"
+		else:
+			for r in results:
+				outgoing_messages.append.(message_man.return_message(r,source))
+
+		return outgoing_messages
 
 		#The most basic way handle can work is it does nothing but relays so:
 		# (msg, source) => (msg,other1),(msg,other2), where others = anyone who has sent a message already
