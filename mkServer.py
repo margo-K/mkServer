@@ -1,5 +1,5 @@
 # @@ mkServer.py Module @@
-## Provides classes, methods and variables for creating, maintaining and closing down a working IRC serverS
+## Provides classes, methods and variables for creating, maintaining and closing down a working IRC server
 
 import socket
 import select
@@ -35,7 +35,6 @@ class Server:
 		self.server_socket.listen(5)
 
 		print "Listening at", self.server_socket.getsockname()
-
 		
 	def server_setup(self,host,port):
 		"""Create the server and initialize the readlist"""
@@ -67,12 +66,7 @@ class Server:
 		return msgs, rest
 
 	def message_process(self,source_socket):
-		""" * Receives messages and performs the requested action, which always involves a state-change
-
-		WHAT IT SHOULD DO: 
-			- send each message to the brain to be parsed and dealt with
-			- receive messages from the brain and enqueue them in the necessary queues
-		"""
+		""" Receive messages from TCP sockets, send them to the Brain for processing & enqueue any messages it says should be """
 		received = source_socket.recv(1024)
 		sndr_addr = source_socket.getpeername() 
 		print  "%s: says %s"% (sndr_addr,received)
@@ -104,8 +98,6 @@ class Server:
 			#Else, goes through the process of reading messages and sending them to the brain to be processed
 			else:
 				self.message_process(socket)
-
-		# subtle bug: if someone isn't in the write_result list, they will miss the message
 		
 		for socket in write_result:
 			try:

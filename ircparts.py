@@ -8,7 +8,7 @@
 """
 
 class Message: 
-		"""IRC Compliant Message (a string) and Methods used for interpreting them
+	"""IRC Compliant Message (a string) and Methods used for interpreting them
 
 	METHODS:
 		__init__ 
@@ -28,40 +28,68 @@ class Message:
 	(must all have methods defined above)
 
 	IMPROVEMENTS:
-		- write a real IRC parser (current is for old stand-in format)
+		- fix the parser so that the trailer can include spaces (i.e. split on the all uppercase action)
+		- pretty up _parse so that it takes advantage of recursion a little more
+
 	"""
+	# def __init__(self,string_message):
+	# 	"""Create an instance of message where the full message is passed in as an attribute"""
+	# 	self.value = string_message
+	# 	self.prefix = ''
+	# 	self.trailer = ''
+	# 	self.command
+	# 	self.whole = (self.prefix,self.command,self.args,self.trailer)
 
-	def __init__(self, string_message):
-		"""Create an instance of message where the full message is passed in as an attribute"""
-		self.value = string_message
-		self.prefix = ''
-		self.trailer = ''
-		self.whole = (self.prefix,self.command,self.args,self.trailer)
-
-	def parse(self):
-		"""Return a tuple including the method for action being performed and the argument it accepts. Does not return if the message is malformed. Q: should it return if the message has a bad key value"""
+	def _parse(self,string_message):
+		"""Return a tuple of the form (prefix,command,args,trailer), where prefix and trailer are empty if nonexistent. Does not return if the message is malformed. Q: should it return if the message has a bad key value"""
 		#print "The message being parsed is " + str(message) - does this even make sense in the current context?
+		prefix = ''
+		trailer = ''
+
 		try: 
-			(tag,delimiter,argument) = message.partition(' ') # Splits the action call off from the argument
-		except IRCError: 
-			#kill of some sort, which signals to the brain that it must send out the message to someone else
+			if string_message.startswith(':'):
+			     prefix,delimiter,remainder = string_message.partition(' ')
+			     prefix = prefix.strip(':')
 
-		else: 
-			if prefix:
-				self.prefix = ":%s"%prefix
+			else: 
+				remainder = string_message
 
-			self.command = command
-			self.args = args
-			if trailer:
-				self.trailer = ":%s"%trailer
-			return (self.prefix,self.command,self.args,self.trailer)
+			if ':' in remainder:
+				rest, delimeter, trailer = remainder.partition(':')
+			else: 
+				rest = remainder
+
+			rest = rest.strip()
+			unpacked = rest.split(' ')
+			command = unpacked.pop(0)
+
+			args = unpacked
+
+		except Exception,e:
+			print "This message is not a valid IRCMessage. It could not be parsed for the following reason: " + str(e)
+		else:
+			return (prefix,command,args,trailer)
+
+
+		# try: 
+		# 	(tag,delimiter,argument) = message.partition(' ') # Splits the action call off from the argument
+		# except IRCError: 
+		# 	#kill of some sort, which signals to the brain that it must send out the message to someone else
+
+		# else: 
+		# 	if prefix:
+		# 		self.prefix = ":%s"%prefix
+
+		# 	self.command = command
+		# 	self.args = args
+		# 	if trailer:
+		# 		self.trailer = ":%s"%trailer
+		# 	return (self.prefix,self.command,self.args,self.trailer)
 
 		# Pure: <message,clientserver_socket> => formatted message :: <String,socketobject> => String
 	def _message_maker (self): # need to get the sender nick sent as the prefix somewhere else
 		"""Produce an IRC-compliant string containing the information of the message"""
 		return ":{0} {1} {2} :{3}".format(self.prefix,self.command,' '.join(self.args),self.trailer) # Need to adjust for when there's no prefix or no trailer
-
-
 
 
 class Channel:
@@ -105,7 +133,7 @@ class Channel:
 	def remove_mode(self,*modes):
 		"""Remove mode from the channel"""
 		for mode in modes:
-			self.mode.remove(mode)ß
+			self.mode.remove(mode)
 
 
 class User: 
